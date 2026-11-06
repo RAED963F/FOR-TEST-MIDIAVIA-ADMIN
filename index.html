@@ -359,6 +359,11 @@
           <option value="completed">Completed</option>
           <option value="rejected">Rejected</option>
         </select>
+        <select id="archiveFilter">
+  <option value="active">Active cases</option>
+  <option value="archived">Archived cases</option>
+  <option value="all">All cases</option>
+</select>
         <button id="refresh" class="btn btn-line" style="padding:9px 14px">Refresh</button>
         <span class="spacer"></span>
         <span class="count" id="count"></span>
@@ -425,6 +430,8 @@
 
     let ALL = [];         // all cases loaded
     let current = null;   // open case
+    let ARCHIVED_IDS = new Set();
+    let archiveChannel = null;
 
     /* ── auth boot ─────────────────────────────────────────── */
     async function boot() {
@@ -452,7 +459,40 @@
       $("#whoami").textContent = user?.email || "";
       $("#loginView").classList.add("hidden");
       $("#appView").classList.remove("hidden");
-      loadCases();
+      await loadCases();
+startArchiveRealtime();
+      function startArchiveRealtime() {
+  // Prevent duplicate subscriptions
+  if (archiveChannel) {
+    sb.removeChannel(archiveChannel);
+    archiveChannel = null;
+  }
+
+  archiveChannel = sb
+    .channel("case-archives-sync")
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "case_archives"
+      },
+      (payload) => {
+        if (payload.eventType === "INSERT") {
+          ARCHIVED_IDS.add(payload.new.case_id);
+        }
+
+        if (payload.eventType === "DELETE") {
+          ARCHIVED_IDS.delete(payload.old.case_id);
+        }
+
+        render();
+      }
+    )
+    .subscribe((status) => {
+  console.log("Archive Realtime:", status);
+});
+}
     }
 
     /* ── login handlers ────────────────────────────────────── */
@@ -496,19 +536,37 @@
         return;
       }
       ALL = data || [];
+      const { data: archivedCases, error: archiveError } = await sb
+  .from("case_archives")
+  .select("case_id");
+
+if (archiveError) {
+  console.error("Archive loading error:", archiveError);
+  $("#count").textContent = "Could not load archive status.";
+  return;
+}
+
+ARCHIVED_IDS = new Set(
+  (archivedCases || []).map(item => item.case_id)
+);
       render();
     }
 
     function currentFilter() {
       return {
         q: $("#search").value.trim().toLowerCase(),
-        status: $("#statusFilter").value
+        status: $("#statusFilter").value,
+        archive: $("#archiveFilter").value
       };
     }
 
     function render() {
-      const { q, status } = currentFilter();
+      const { q, status, archive } = currentFilter();
       const rows = ALL.filter(c => {
+        const isArchived = ARCHIVED_IDS.has(c.id);
+
+if (archive === "active" && isArchived) return false;
+if (archive === "archived" && !isArchived) return false;
         if (status && c.status !== status) return false;
         if (!q) return true;
         const hay = [c.reference, c.first_name, c.last_name, c.nationality, c.email, c.reason]
@@ -564,6 +622,7 @@
 
     $("#search").addEventListener("input", render);
     $("#statusFilter").addEventListener("change", render);
+    $("#archiveFilter").addEventListener("change", render);
     $("#refresh").addEventListener("click", loadCases);
 
     /* ── detail drawer ─────────────────────────────────────── */
@@ -638,6 +697,70 @@
       });
       row.append(sel, saveMsg);
       body.append(t4, row);
+      // Archive / Restore
+const archiveBtn = document.createElement("button");
+archiveBtn.className = "btn btn-line";
+archiveBtn.style.marginTop = "18px";
+
+const isArchived = ARCHIVED_IDS.has(c.id);
+archiveBtn.textContent = isArchived ? "Restore" : "Archive";
+
+archiveBtn.addEventListener("click", async () => {
+  const restoring = ARCHIVED_IDS.has(c.id);
+  const action = restoring ? "Restore" : "Archive";
+
+  if (!confirm(`${action} case ${c.reference}?`)) return;
+
+  archiveBtn.disabled = true;
+  archiveBtn.textContent = "Processing...";
+
+  let error = null;
+
+  if (restoring) {
+    const result = await sb
+      .from("case_archives")
+      .delete()
+      .eq("case_id", c.id);
+
+    error = result.error;
+
+  } else {
+    const { data: { user }, error: userError } = await sb.auth.getUser();
+
+    if (userError || !user) {
+      error = userError || new Error("Admin user not found.");
+    } else {
+      const result = await sb
+        .from("case_archives")
+        .insert({
+          case_id: c.id,
+          reference: c.reference,
+          archived_by: user.id
+        });
+
+      error = result.error;
+    }
+  }
+
+  if (error) {
+    console.error("Archive operation failed:", error);
+    alert("Operation failed. Please try again.");
+    archiveBtn.disabled = false;
+    archiveBtn.textContent = restoring ? "Restore" : "Archive";
+    return;
+  }
+
+  if (restoring) {
+    ARCHIVED_IDS.delete(c.id);
+  } else {
+    ARCHIVED_IDS.add(c.id);
+  }
+
+  closeDrawer();
+  render();
+});
+
+body.appendChild(archiveBtn);
 
       openDrawer();
     }
