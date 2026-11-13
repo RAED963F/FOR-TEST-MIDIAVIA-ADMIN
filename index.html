@@ -672,6 +672,52 @@ if (archive === "archived" && !isArchived) return false;
       body.append(filesWrap);
       renderFiles(filesWrap, c);
 
+      // communication
+const mailTitle = document.createElement("div");
+mailTitle.className = "sec-title";
+mailTitle.textContent = "Patient Communication";
+body.appendChild(mailTitle);
+
+const mailInfo = document.createElement("div");
+mailInfo.style.cssText = "font-size:13px;color:var(--muted);margin-bottom:12px;";
+mailInfo.textContent = c.email || "No patient email available";
+body.appendChild(mailInfo);
+
+const replyBtn = document.createElement("button");
+replyBtn.type = "button";
+replyBtn.textContent = "Reply to Patient";
+replyBtn.style.cssText = "padding:10px 16px;border:0;border-radius:8px;background:var(--copper-ink);color:white;cursor:pointer;font-weight:600;";
+
+replyBtn.disabled = !c.email;
+
+replyBtn.addEventListener("click", () => {
+    const subject = `MediVia - Case ${c.reference || c.id}`;
+    const patientName = `${c.first_name || ""} ${c.last_name || ""}`.trim();
+
+    const message = `عزيزي/عزيزتي ${patientName || "المريض"},
+
+
+
+شكراً لتواصلك مع MediVia.
+
+إذا كانت لديك أي معلومات إضافية، يمكنك الرد مباشرة على هذه الرسالة.
+
+مع أطيب التحيات،
+فريق MediVia الطبي
+a@medical-via.com`;
+
+    const gmailUrl = "https://mail.google.com/mail/u/0/?view=cm&fs=1&" +
+        new URLSearchParams({
+            to: c.email,
+            su: subject,
+            body: message
+        }).toString();
+
+    window.open(gmailUrl, "_blank");
+});
+
+body.appendChild(replyBtn);
+
       // status
       const t4 = document.createElement("div"); t4.className = "sec-title"; t4.textContent = "Status";
       const row = document.createElement("div"); row.className = "status-row";
