@@ -690,15 +690,40 @@ replyBtn.style.cssText = "padding:10px 16px;border:0;border-radius:8px;backgroun
 
 replyBtn.disabled = !c.email;
 
-replyBtn.addEventListener("click", () => {
-    const subject = `MediVia - Case ${c.reference || c.id}`;
-    const patientName = `${c.first_name || ""} ${c.last_name || ""}`.trim();
 
-    const message = `عزيزي/عزيزتي ${patientName || "المريض"},
+replyBtn.addEventListener("click", async () => {
+    let authWindow = null;
 
+    try {
+        if (!c.email) {
+            alert("No patient email available.");
+            return;
+        }
 
+        // Open the popup immediately from the user's click.
+        authWindow = window.open(
+            "about:blank",
+            "mediviaGoogleAuth",
+            "popup,width=600,height=750"
+        );
+
+        if (!authWindow) {
+            alert("Please allow pop-ups for MediVia and try again.");
+            return;
+        }
+
+        replyBtn.disabled = true;
+        replyBtn.textContent = "Preparing email...";
+
+        const subject = `MediVia - Case ${c.reference || c.id}`;
+        const patientName =
+            `${c.first_name || ""} ${c.last_name || ""}`.trim();
+
+        const message = `عزيزي/عزيزتي ${patientName || "المريض"},
 
 شكراً لتواصلك مع MediVia.
+
+لقد استلمنا طلبك واطّلعنا على المعلومات التي أرسلتها. سيتواصل معك فريقنا لمتابعة حالتك والرد على استفساراتك.
 
 إذا كانت لديك أي معلومات إضافية، يمكنك الرد مباشرة على هذه الرسالة.
 
@@ -706,14 +731,43 @@ replyBtn.addEventListener("click", () => {
 فريق MediVia الطبي
 a@medical-via.com`;
 
-    const gmailUrl = "https://mail.google.com/mail/u/0/?view=cm&fs=1&" +
-        new URLSearchParams({
-            to: c.email,
-            su: subject,
-            body: message
-        }).toString();
+        const { data, error } = await sb.functions.invoke(
+            "google-oauth-start",
+            {
+                body: {
+                    recipient: c.email,
+                    subject,
+                    message
+                }
+            }
+        );
 
-    window.open(gmailUrl, "_blank");
+        if (error) throw error;
+
+        if (!data?.auth_url) {
+            throw new Error("Google authorization URL was not returned.");
+        }
+
+        authWindow.location.href = data.auth_url;
+
+        replyBtn.textContent = "Reply to Patient";
+
+    } catch (err) {
+        console.error("MediVia email error:", err);
+
+        if (authWindow && !authWindow.closed) {
+            authWindow.close();
+        }
+
+        alert(
+            "تعذر فتح Gmail. تحقق من الاتصال وتسجيل دخولك إلى MediVia."
+        );
+
+        replyBtn.textContent = "Reply to Patient";
+
+    } finally {
+        replyBtn.disabled = false;
+    }
 });
 
 body.appendChild(replyBtn);
